@@ -1,25 +1,52 @@
-import { useState, useEffect } from 'react';
-import { motion } from 'framer-motion';
-import { Brain, Zap, RefreshCw, Sparkles } from 'lucide-react';
+import { useState, useEffect, useRef } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
+import { RefreshCw, Send, Zap } from 'lucide-react';
 import { motionSessionService } from '@/services/motionSessionService';
 import { getAvatar } from './LevelUpModal';
 
+const QUICK_PROMPTS = [
+  { emoji: '💪', text: 'How can I improve my squat form?' },
+  { emoji: '📈', text: 'What is the best workout plan for me?' },
+  { emoji: '🏆', text: 'How do I unlock the next badge?' },
+  { emoji: '⚡', text: 'How can I earn more XP faster?' },
+];
+
 export default function AIInsightScreen() {
   const [insight, setInsight] = useState('');
-  const [loading, setLoading] = useState(false);
+  const [insightLoading, setInsightLoading] = useState(false);
+  const [messages, setMessages] = useState([]);
+  const [input, setInput] = useState('');
+  const [chatLoading, setChatLoading] = useState(false);
+  const [totals, setTotals] = useState({
+    totalSessions: 0, totalReps: 0,
+    totalPerfectReps: 0, totalDuration: 0, totalXp: 0,
+  });
+
+  const messagesEndRef = useRef(null);
+  const inputRef = useRef(null);
 
   const level = parseInt(localStorage.getItem('arquest-level') || '1');
   const xp = parseInt(localStorage.getItem('arquest-xp') || '0');
   const streak = parseInt(localStorage.getItem('motioncore-streak') || '0');
   const avatar = getAvatar(level);
 
-  const generateInsight = async () => {
-    setLoading(true);
-    setInsight('');
-    try {
-      const totals = await motionSessionService.getTotalStats();
-      const prompt = `You are ARQuest AI, a gamified fitness coach.
-User stats:
+  useEffect(() => {
+    motionSessionService.getTotalStats().then(stats => {
+      setTotals(stats);
+      // Add welcome message
+      setMessages([{
+        role: 'assistant',
+        content: `Hey! I'm your ARQuest Coach powered by Claude. I can see your stats — Level ${level}, ${streak}-day streak, ${stats.totalReps} total reps. Ask me anything about your training, form tips, or how to level up faster! 💪`,
+      }]);
+    });
+  }, []);
+
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages]);
+
+  const buildSystemPrompt = () => `You are ARQuest Coach, a gamified fitness coach built into ARQuest app.
+The user's current stats:
 - Level: ${level} (${avatar.label})
 - Total XP: ${xp}
 - Streak: ${streak} days
@@ -28,172 +55,243 @@ User stats:
 - Perfect Reps: ${totals.totalPerfectReps}
 - Time Trained: ${Math.floor(totals.totalDuration / 60)} minutes
 
-Give ONE powerful, personalized insight in exactly 2 sentences. Be specific to their stats. Use motivating gamified tone. No emojis. No preamble. Just the insight.`;
+ARQuest features: habit quests, motion-verified exercises (squats, push-ups, lunges, jumping jacks), XP system, levels, badges (First Quest at 1 session, Rep Master at 50 reps, Perfect Form at 10 perfect reps, XP Hunter at 100 XP, Warrior at 5 sessions, Legend at 200 reps).
 
+Be motivating, concise, and gamified in tone. Keep responses under 3 sentences. Use emojis sparingly.`;
+
+  const generateInsight = async () => {
+    setInsightLoading(true);
+    setInsight('');
+    try {
       const response = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           model: 'claude-sonnet-4-20250514',
           max_tokens: 1000,
-          messages: [{ role: 'user', content: prompt }],
+          system: buildSystemPrompt(),
+          messages: [{ role: 'user', content: 'Give me one powerful personalized insight about my progress in exactly 2 sentences. Be specific to my stats. No preamble.' }],
         }),
       });
       const data = await response.json();
-      const text = data.content?.find(c => c.type === 'text')?.text || 'Your consistency is your greatest weapon. Every rep is XP in the real world.';
-      setInsight(text);
+      setInsight(data.content?.find(c => c.type === 'text')?.text || 'Keep pushing — every rep brings you closer to your next level!');
     } catch {
       setInsight('Your consistency is your greatest weapon. Every rep earned is XP that compounds over time.');
     } finally {
-      setLoading(false);
+      setInsightLoading(false);
     }
   };
 
-  useEffect(() => { generateInsight(); }, []);
+  const sendMessage = async (text) => {
+    const userText = text || input.trim();
+    if (!userText || chatLoading) return;
+
+    setInput('');
+    const newMessages = [...messages, { role: 'user', content: userText }];
+    setMessages(newMessages);
+    setChatLoading(true);
+
+    try {
+      const response = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: 'claude-sonnet-4-20250514',
+          max_tokens: 1000,
+          system: buildSystemPrompt(),
+          messages: newMessages.map(m => ({ role: m.role, content: m.content })),
+        }),
+      });
+      const data = await response.json();
+      const reply = data.content?.find(c => c.type === 'text')?.text || 'Keep going! Every rep counts. 💪';
+      setMessages(prev => [...prev, { role: 'assistant', content: reply }]);
+    } catch {
+      setMessages(prev => [...prev, { role: 'assistant', content: 'Connection issue. Please try again!' }]);
+    } finally {
+      setChatLoading(false);
+      inputRef.current?.focus();
+    }
+  };
+
+  const handleKeyDown = (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      sendMessage();
+    }
+  };
+
+  // Generate insight on mount
+  useEffect(() => {
+    if (totals.totalSessions >= 0) generateInsight();
+  }, [totals]);
 
   return (
-    <div style={{ minHeight: '100vh', background: 'var(--color-bg)', paddingBottom: '90px' }}>
+    <div style={{ height: 'calc(100vh - 58px)', background: 'var(--color-bg)', display: 'grid', gridTemplateColumns: '340px 1fr', overflow: 'hidden' }}>
 
-      {/* Header */}
-      <div style={{ padding: '20px 16px 16px' }}>
-        <h2 style={{ fontSize: '26px', fontWeight: 800, color: 'var(--color-text)', margin: '0 0 2px', letterSpacing: '-0.5px' }}>
-          AI Insight
-        </h2>
-        <p style={{ fontSize: '12px', color: 'var(--color-text-muted)', margin: 0 }}>
-          Powered by Claude
-        </p>
-      </div>
+      {/* ── LEFT PANEL ── */}
+      <div style={{ borderRight: '1px solid var(--color-border)', padding: '24px 20px', display: 'flex', flexDirection: 'column', gap: '14px', overflowY: 'auto' }}>
 
-      <div style={{ padding: '0 16px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
-
-        {/* Stats Row */}
+        {/* AI Hero Insight */}
         <motion.div
-          style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '10px' }}
-          initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }}
+          style={{ background: 'linear-gradient(135deg, var(--color-accent-dim), rgba(0,0,0,0))', border: '1px solid var(--color-border-accent)', borderRadius: '20px', padding: '22px', position: 'relative', overflow: 'hidden' }}
+          initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
+        >
+          <div style={{ position: 'absolute', top: '-30px', right: '-30px', width: '140px', height: '140px', background: 'radial-gradient(circle, var(--color-accent-glow) 0%, transparent 70%)', pointerEvents: 'none' }} />
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '14px' }}>
+            <div style={{ width: '40px', height: '40px', background: 'var(--color-accent)', borderRadius: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '14px', fontWeight: 800, color: '#000' }}>AI</div>
+            <div>
+              <div style={{ fontSize: '13px', fontWeight: 700, color: 'var(--color-accent)', textTransform: 'uppercase', letterSpacing: '0.12em' }}>ARQuest AI</div>
+              <div style={{ fontSize: '11px', color: 'var(--color-text-muted)' }}>Powered by Claude</div>
+            </div>
+          </div>
+
+          {insightLoading ? (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '8px 0' }}>
+              <motion.div animate={{ rotate: 360 }} transition={{ duration: 1, repeat: Infinity, ease: 'linear' }}>
+                <Zap size={16} color="var(--color-accent)" />
+              </motion.div>
+              <span style={{ fontSize: '13px', color: 'var(--color-text-muted)' }}>Analyzing your quest data...</span>
+            </div>
+          ) : (
+            <motion.p
+              style={{ fontSize: '14px', color: 'var(--color-text)', lineHeight: 1.7, margin: '0 0 14px', fontWeight: 500 }}
+              initial={{ opacity: 0 }} animate={{ opacity: 1 }}
+            >
+              {insight || 'Generating your personalized insight...'}
+            </motion.p>
+          )}
+
+          <button
+            onClick={generateInsight}
+            disabled={insightLoading}
+            style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '8px 16px', background: insightLoading ? 'var(--color-panel)' : 'var(--color-accent)', border: 'none', borderRadius: '10px', color: insightLoading ? 'var(--color-text-muted)' : '#000', fontSize: '12px', fontWeight: 700, cursor: insightLoading ? 'not-allowed' : 'pointer' }}
+          >
+            <RefreshCw size={13} /> New Insight
+          </button>
+        </motion.div>
+
+        {/* Stats Snapshot */}
+        <motion.div
+          style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '8px' }}
+          initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.05 }}
         >
           {[
             { label: 'Level', value: level },
             { label: 'Streak', value: `${streak}d` },
             { label: 'XP', value: xp },
           ].map(stat => (
-            <div key={stat.label} style={{
-              background: 'var(--color-panel)', border: '1px solid var(--color-border)',
-              borderRadius: '16px', padding: '14px', textAlign: 'center'
-            }}>
-              <div style={{ fontSize: '22px', fontWeight: 800, color: 'var(--color-accent)', letterSpacing: '-0.5px' }}>
-                {stat.value}
-              </div>
-              <div style={{ fontSize: '11px', color: 'var(--color-text-muted)', marginTop: '2px' }}>
-                {stat.label}
-              </div>
+            <div key={stat.label} style={{ background: 'var(--color-panel)', border: '1px solid var(--color-border)', borderRadius: '14px', padding: '14px', textAlign: 'center' }}>
+              <div style={{ fontSize: '22px', fontWeight: 800, color: 'var(--color-accent)', letterSpacing: '-0.5px' }}>{stat.value}</div>
+              <div style={{ fontSize: '10px', color: 'var(--color-text-muted)', marginTop: '2px', textTransform: 'uppercase', letterSpacing: '0.08em' }}>{stat.label}</div>
             </div>
           ))}
         </motion.div>
 
-        {/* Avatar context */}
+        {/* Quick Prompts */}
         <motion.div
-          style={{
-            background: 'var(--color-panel)', border: '1px solid var(--color-border)',
-            borderRadius: '18px', padding: '14px 16px',
-            display: 'flex', alignItems: 'center', gap: '12px'
-          }}
-          initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.05 }}
+          initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }}
         >
-          <span style={{ fontSize: '28px' }}>{avatar.emoji}</span>
-          <div>
-            <div style={{ fontSize: '12px', fontWeight: 700, color: 'var(--color-accent)' }}>{avatar.label}</div>
-            <div style={{ fontSize: '12px', color: 'var(--color-text-muted)' }}>Your current rank</div>
+          <div style={{ fontSize: '11px', fontWeight: 700, color: 'var(--color-text-muted)', textTransform: 'uppercase', letterSpacing: '0.12em', marginBottom: '10px' }}>
+            Quick Questions
           </div>
-          <div style={{ marginLeft: 'auto', textAlign: 'right' }}>
-            <div style={{ fontSize: '11px', color: 'var(--color-text-muted)' }}>Next rank at</div>
-            <div style={{ fontSize: '13px', fontWeight: 700, color: 'var(--color-text)' }}>Level {level + 1}</div>
-          </div>
-        </motion.div>
-
-        {/* AI Insight Card */}
-        <motion.div
-          style={{
-            background: 'var(--color-accent-dim)',
-            border: '1px solid var(--color-border-accent)',
-            borderRadius: '20px', padding: '20px',
-          }}
-          initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }}
-        >
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '14px' }}>
-            <div style={{
-              width: '32px', height: '32px', borderRadius: '10px',
-              background: 'var(--color-accent)', display: 'flex', alignItems: 'center', justifyContent: 'center'
-            }}>
-              <Brain size={16} color="#000" />
-            </div>
-            <div>
-              <div style={{ fontSize: '12px', fontWeight: 700, color: 'var(--color-accent)', textTransform: 'uppercase', letterSpacing: '0.1em' }}>
-                ARQuest AI
-              </div>
-              <div style={{ fontSize: '10px', color: 'var(--color-text-muted)' }}>
-                Personalized to your stats
-              </div>
-            </div>
-            <Sparkles size={14} color="var(--color-accent)" style={{ marginLeft: 'auto' }} />
-          </div>
-
-          {loading ? (
-            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '8px 0' }}>
-              <motion.div
-                animate={{ rotate: 360 }}
-                transition={{ duration: 1, repeat: Infinity, ease: 'linear' }}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+            {QUICK_PROMPTS.map((prompt, i) => (
+              <motion.button
+                key={i}
+                onClick={() => sendMessage(prompt.text)}
+                disabled={chatLoading}
+                style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '10px 14px', background: 'var(--color-panel)', border: '1px solid var(--color-border)', borderRadius: '12px', cursor: chatLoading ? 'not-allowed' : 'pointer', textAlign: 'left', width: '100%', transition: 'border 0.15s' }}
+                whileHover={{ borderColor: 'var(--color-accent)' }}
               >
-                <Zap size={16} color="var(--color-accent)" />
+                <span style={{ fontSize: '16px', flexShrink: 0 }}>{prompt.emoji}</span>
+                <span style={{ fontSize: '12px', color: 'var(--color-text-muted)', fontWeight: 500 }}>{prompt.text}</span>
+              </motion.button>
+            ))}
+          </div>
+        </motion.div>
+
+      </div>
+
+      {/* ── RIGHT PANEL — Chatbot ── */}
+      <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+
+        {/* Chat Header */}
+        <div style={{ padding: '16px 20px', borderBottom: '1px solid var(--color-border)', display: 'flex', alignItems: 'center', gap: '10px' }}>
+          <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: 'var(--color-success)', boxShadow: '0 0 6px var(--color-success)' }} />
+          <span style={{ fontSize: '14px', fontWeight: 700, color: 'var(--color-text)' }}>ARQuest Coach</span>
+          <span style={{ fontSize: '11px', color: 'var(--color-text-muted)', marginLeft: 'auto' }}>Ask anything about your fitness</span>
+          <button
+            onClick={() => setMessages([{
+              role: 'assistant',
+              content: `Hey! I'm your ARQuest Coach. Level ${level}, ${streak}-day streak, ${totals.totalReps} total reps. What can I help you with? 💪`,
+            }])}
+            style={{ background: 'var(--color-panel)', border: '1px solid var(--color-border)', borderRadius: '8px', padding: '5px 10px', fontSize: '11px', color: 'var(--color-text-muted)', cursor: 'pointer' }}
+          >
+            Clear
+          </button>
+        </div>
+
+        {/* Messages */}
+        <div style={{ flex: 1, padding: '20px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '14px' }}>
+          <AnimatePresence>
+            {messages.map((msg, i) => (
+              <motion.div
+                key={i}
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                style={{ display: 'flex', gap: '10px', maxWidth: '80%', alignSelf: msg.role === 'user' ? 'flex-end' : 'flex-start', flexDirection: msg.role === 'user' ? 'row-reverse' : 'row' }}
+              >
+                {/* Avatar */}
+                <div style={{ width: '30px', height: '30px', borderRadius: '9px', background: msg.role === 'assistant' ? 'var(--color-accent)' : 'var(--color-panel)', border: msg.role === 'user' ? '1px solid var(--color-border)' : 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: msg.role === 'assistant' ? '11px' : '14px', fontWeight: 800, color: msg.role === 'assistant' ? '#000' : 'var(--color-text)', flexShrink: 0 }}>
+                  {msg.role === 'assistant' ? 'AI' : '👤'}
+                </div>
+                {/* Bubble */}
+                <div style={{ padding: '11px 15px', borderRadius: msg.role === 'assistant' ? '4px 16px 16px 16px' : '16px 4px 16px 16px', background: msg.role === 'assistant' ? 'var(--color-panel)' : 'var(--color-accent-dim)', border: `1px solid ${msg.role === 'assistant' ? 'var(--color-border)' : 'var(--color-border-accent)'}`, fontSize: '13px', lineHeight: 1.6, color: 'var(--color-text)', maxWidth: '100%', wordBreak: 'break-word' }}>
+                  {msg.content}
+                </div>
               </motion.div>
-              <span style={{ fontSize: '13px', color: 'var(--color-text-muted)' }}>
-                Analyzing your quest data...
-              </span>
-            </div>
-          ) : (
-            <motion.p
-              style={{
-                fontSize: '15px', fontWeight: 500, color: 'var(--color-text)',
-                lineHeight: 1.6, margin: 0
-              }}
-              initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.5 }}
+            ))}
+          </AnimatePresence>
+
+          {/* Loading indicator */}
+          {chatLoading && (
+            <motion.div
+              initial={{ opacity: 0 }} animate={{ opacity: 1 }}
+              style={{ display: 'flex', gap: '10px', alignSelf: 'flex-start' }}
             >
-              {insight}
-            </motion.p>
+              <div style={{ width: '30px', height: '30px', borderRadius: '9px', background: 'var(--color-accent)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '11px', fontWeight: 800, color: '#000', flexShrink: 0 }}>AI</div>
+              <div style={{ padding: '11px 15px', borderRadius: '4px 16px 16px 16px', background: 'var(--color-panel)', border: '1px solid var(--color-border)', display: 'flex', gap: '4px', alignItems: 'center' }}>
+                {[0, 1, 2].map(i => (
+                  <motion.div key={i} style={{ width: '6px', height: '6px', borderRadius: '50%', background: 'var(--color-accent)' }}
+                    animate={{ y: [0, -4, 0] }} transition={{ duration: 0.6, repeat: Infinity, delay: i * 0.15 }} />
+                ))}
+              </div>
+            </motion.div>
           )}
-        </motion.div>
+          <div ref={messagesEndRef} />
+        </div>
 
-        {/* Refresh Button */}
-        <motion.button
-          onClick={generateInsight}
-          disabled={loading}
-          style={{
-            width: '100%', padding: '14px', borderRadius: '16px',
-            background: loading ? 'var(--color-panel)' : 'var(--color-accent)',
-            border: `1px solid ${loading ? 'var(--color-border)' : 'transparent'}`,
-            color: loading ? 'var(--color-text-muted)' : '#000',
-            fontSize: '14px', fontWeight: 700, cursor: loading ? 'not-allowed' : 'pointer',
-            display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px'
-          }}
-          initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.15 }}
-          whileTap={{ scale: loading ? 1 : 0.97 }}
-        >
-          <RefreshCw size={16} />
-          {loading ? 'Generating...' : 'New Insight'}
-        </motion.button>
-
-        {/* Info tip */}
-        <motion.div
-          style={{
-            background: 'var(--color-panel)', border: '1px solid var(--color-border)',
-            borderRadius: '16px', padding: '14px 16px'
-          }}
-          initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }}
-        >
-          <p style={{ fontSize: '12px', color: 'var(--color-text-muted)', margin: 0, lineHeight: 1.6 }}>
-            AI Insight analyzes your level, streak, reps and sessions to give you one personalized recommendation. Complete more quests for deeper insights.
-          </p>
-        </motion.div>
-
+        {/* Input */}
+        <div style={{ padding: '14px 20px', borderTop: '1px solid var(--color-border)', display: 'flex', gap: '10px' }}>
+          <input
+            ref={inputRef}
+            type="text"
+            placeholder="Ask your coach anything..."
+            value={input}
+            onChange={e => setInput(e.target.value)}
+            onKeyDown={handleKeyDown}
+            disabled={chatLoading}
+            style={{ flex: 1, background: 'var(--color-panel)', border: '1px solid var(--color-border)', borderRadius: '12px', padding: '11px 16px', fontSize: '13px', color: 'var(--color-text)', outline: 'none' }}
+          />
+          <motion.button
+            onClick={() => sendMessage()}
+            disabled={!input.trim() || chatLoading}
+            style={{ width: '42px', height: '42px', background: input.trim() && !chatLoading ? 'var(--color-accent)' : 'var(--color-panel)', border: `1px solid ${input.trim() && !chatLoading ? 'transparent' : 'var(--color-border)'}`, borderRadius: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: input.trim() && !chatLoading ? 'pointer' : 'not-allowed', flexShrink: 0 }}
+            whileTap={{ scale: 0.95 }}
+          >
+            <Send size={16} color={input.trim() && !chatLoading ? '#000' : 'var(--color-text-muted)'} />
+          </motion.button>
+        </div>
       </div>
     </div>
   );
