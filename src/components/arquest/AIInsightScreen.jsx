@@ -36,7 +36,7 @@ export default function AIInsightScreen() {
       // Add welcome message
       setMessages([{
         role: 'assistant',
-        content: `Hey! I'm your ARQuest Coach powered by Claude. I can see your stats — Level ${level}, ${streak}-day streak, ${stats.totalReps} total reps. Ask me anything about your training, form tips, or how to level up faster! 💪`,
+        content: `Hey! I'm your ARQuest Coach powered by Gemini. I can see your stats — Level ${level}, ${streak}-day streak, ${stats.totalReps} total reps. Ask me anything about your training, form tips, or how to level up faster! 💪`,
       }]);
     });
   }, []);
@@ -63,19 +63,24 @@ Be motivating, concise, and gamified in tone. Keep responses under 3 sentences. 
     setInsightLoading(true);
     setInsight('');
     try {
-      const response = await fetch('https://api.anthropic.com/v1/messages', {
+      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${import.meta.env.VITE_GEMINI_API_KEY}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          model: 'claude-sonnet-4-20250514',
-          max_tokens: 1000,
-          system: buildSystemPrompt(),
-          messages: [{ role: 'user', content: 'Give me one powerful personalized insight about my progress in exactly 2 sentences. Be specific to my stats. No preamble.' }],
+          systemInstruction: {
+            parts: [{ text: buildSystemPrompt() }]
+          },
+          contents: [{
+            role: 'user',
+            parts: [{ text: 'Give me one powerful personalized insight about my progress in exactly 2 sentences. Be specific to my stats. No preamble.' }]
+          }]
         }),
       });
       const data = await response.json();
-      setInsight(data.content?.find(c => c.type === 'text')?.text || 'Keep pushing — every rep brings you closer to your next level!');
-    } catch {
+      if (data.error) throw new Error(data.error.message);
+      setInsight(data.candidates?.[0]?.content?.parts?.[0]?.text || 'Keep pushing — every rep brings you closer to your next level!');
+    } catch (e) {
+      console.error(e);
       setInsight('Your consistency is your greatest weapon. Every rep earned is XP that compounds over time.');
     } finally {
       setInsightLoading(false);
@@ -92,20 +97,34 @@ Be motivating, concise, and gamified in tone. Keep responses under 3 sentences. 
     setChatLoading(true);
 
     try {
-      const response = await fetch('https://api.anthropic.com/v1/messages', {
+      // Gemini API requires the conversation history to start with a 'user' message
+      let validMessages = [...newMessages];
+      while (validMessages.length > 0 && validMessages[0].role === 'assistant') {
+        validMessages.shift();
+      }
+
+      const geminiMessages = validMessages.map(m => ({
+        role: m.role === 'assistant' ? 'model' : 'user',
+        parts: [{ text: m.content }]
+      }));
+
+      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${import.meta.env.VITE_GEMINI_API_KEY}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          model: 'claude-sonnet-4-20250514',
-          max_tokens: 1000,
-          system: buildSystemPrompt(),
-          messages: newMessages.map(m => ({ role: m.role, content: m.content })),
+          systemInstruction: {
+            parts: [{ text: buildSystemPrompt() }]
+          },
+          contents: geminiMessages
         }),
       });
       const data = await response.json();
-      const reply = data.content?.find(c => c.type === 'text')?.text || 'Keep going! Every rep counts. 💪';
+      if (data.error) throw new Error(data.error.message);
+      
+      const reply = data.candidates?.[0]?.content?.parts?.[0]?.text || 'Keep going! Every rep counts. 💪';
       setMessages(prev => [...prev, { role: 'assistant', content: reply }]);
-    } catch {
+    } catch (e) {
+      console.error(e);
       setMessages(prev => [...prev, { role: 'assistant', content: 'Connection issue. Please try again!' }]);
     } finally {
       setChatLoading(false);
@@ -141,7 +160,7 @@ Be motivating, concise, and gamified in tone. Keep responses under 3 sentences. 
             <div style={{ width: '40px', height: '40px', background: 'var(--color-accent)', borderRadius: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '14px', fontWeight: 800, color: '#000' }}>AI</div>
             <div>
               <div style={{ fontSize: '13px', fontWeight: 700, color: 'var(--color-accent)', textTransform: 'uppercase', letterSpacing: '0.12em' }}>ARQuest AI</div>
-              <div style={{ fontSize: '11px', color: 'var(--color-text-muted)' }}>Powered by Claude</div>
+              <div style={{ fontSize: '11px', color: 'var(--color-text-muted)' }}>Powered by Gemini</div>
             </div>
           </div>
 

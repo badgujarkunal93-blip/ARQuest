@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Zap, Flame, Shield, Plus, X, ChevronRight, CheckCircle, RotateCcw, Volume2, VolumeX, ChevronDown, Dumbbell, Info } from 'lucide-react';
+import { Zap, Flame, Shield, Plus, X, ChevronRight, CheckCircle, RotateCcw, Volume2, VolumeX, ChevronDown, Dumbbell } from 'lucide-react';
 import { EXERCISE_LIBRARY } from '@/components/motioncore/FormScoreEngine';
 import PoseTracker from '@/components/motioncore/PoseTracker';
 import GhostTrainer from '@/components/motioncore/GhostTrainer';
@@ -61,7 +61,6 @@ export default function HomeScreen() {
   const [voiceEnabled, setVoiceEnabled] = useState(false);
   const [showSelector, setShowSelector] = useState(false);
   const [questVerified, setQuestVerified] = useState(false);
-  const [showInstructions, setShowInstructions] = useState(true);
   const [selectedExercise, setSelectedExercise] = useState(EXERCISES[0]);
 
   const prevRepCountRef = useRef(0);
@@ -290,7 +289,7 @@ export default function HomeScreen() {
                 <p style={{ fontSize: '11px', color: 'var(--color-text-muted)', margin: 0 }}>Verifying: {activeQuest.title}</p>
               </div>
               <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                {!showInstructions && (
+                {false && !showInstructions && (
                   <button onClick={() => setShowInstructions(true)}
                     style={{ background: 'var(--color-panel)', border: '1px solid var(--color-border)', borderRadius: '10px', padding: '7px', cursor: 'pointer', color: 'var(--color-text-muted)', display: 'flex' }}>
                     <Info size={15} />
@@ -333,7 +332,7 @@ export default function HomeScreen() {
 
             {/* Instructions */}
             <AnimatePresence>
-              {showInstructions && (
+              {false && showInstructions && (
                 <motion.div style={{ background: '#1a1a2e', border: '1px solid rgba(168,85,247,0.3)', borderRadius: '16px', padding: '14px 16px' }}
                   initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }}>
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px' }}>
