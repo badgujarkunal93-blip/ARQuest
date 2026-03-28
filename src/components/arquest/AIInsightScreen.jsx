@@ -36,7 +36,7 @@ export default function AIInsightScreen() {
       // Add welcome message
       setMessages([{
         role: 'assistant',
-        content: `Hey! I'm your ARQuest Coach powered by Gemini. I can see your stats — Level ${level}, ${streak}-day streak, ${stats.totalReps} total reps. Ask me anything about your training, form tips, or how to level up faster! 💪`,
+        content: `Hey! I'm your ARQuest Coach powered by Groq AI. I can see your stats — Level ${level}, ${streak}-day streak, ${stats.totalReps} total reps. Ask me anything about your training, form tips, or how to level up faster! 💪`,
       }]);
     });
   }, []);
@@ -59,29 +59,37 @@ ARQuest features: habit quests, motion-verified exercises (squats, push-ups, lun
 
 Be motivating, concise, and gamified in tone. Keep responses under 3 sentences. Use emojis sparingly.`;
 
+  const callGroq = async (messages) => {
+    const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${import.meta.env.VITE_GROQ_API_KEY}`,
+      },
+      body: JSON.stringify({
+        model: 'llama-3.3-70b-versatile',
+        messages,
+        temperature: 0.7,
+        max_tokens: 300,
+      }),
+    });
+    const data = await response.json();
+    if (data.error) throw new Error(data.error.message || data.error.type || 'API error');
+    return data.choices?.[0]?.message?.content || '';
+  };
+
   const generateInsight = async () => {
     setInsightLoading(true);
     setInsight('');
     try {
-      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${import.meta.env.VITE_GEMINI_API_KEY}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          systemInstruction: {
-            parts: [{ text: buildSystemPrompt() }]
-          },
-          contents: [{
-            role: 'user',
-            parts: [{ text: 'Give me one powerful personalized insight about my progress in exactly 2 sentences. Be specific to my stats. No preamble.' }]
-          }]
-        }),
-      });
-      const data = await response.json();
-      if (data.error) throw new Error(data.error.message);
-      setInsight(data.candidates?.[0]?.content?.parts?.[0]?.text || 'Keep pushing — every rep brings you closer to your next level!');
+      const reply = await callGroq([
+        { role: 'system', content: buildSystemPrompt() },
+        { role: 'user', content: 'Give me one powerful personalized insight about my progress in exactly 2 sentences. Be specific to my stats. No preamble.' },
+      ]);
+      setInsight(reply || 'Keep pushing — every rep brings you closer to your next level!');
     } catch (e) {
-      console.error(e);
-      setInsight('Your consistency is your greatest weapon. Every rep earned is XP that compounds over time.');
+      console.error('Insight error:', e);
+      setInsight(e.message?.includes('rate_limit') ? 'API rate limit reached. Please wait a minute and try again.' : 'Your consistency is your greatest weapon. Every rep earned is XP that compounds over time.');
     } finally {
       setInsightLoading(false);
     }
@@ -97,35 +105,22 @@ Be motivating, concise, and gamified in tone. Keep responses under 3 sentences. 
     setChatLoading(true);
 
     try {
-      // Gemini API requires the conversation history to start with a 'user' message
-      let validMessages = [...newMessages];
-      while (validMessages.length > 0 && validMessages[0].role === 'assistant') {
-        validMessages.shift();
-      }
+      // Build conversation for Groq (OpenAI format)
+      const groqMessages = [
+        { role: 'system', content: buildSystemPrompt() },
+        ...newMessages.map(m => ({ role: m.role, content: m.content })),
+      ];
 
-      const geminiMessages = validMessages.map(m => ({
-        role: m.role === 'assistant' ? 'model' : 'user',
-        parts: [{ text: m.content }]
-      }));
-
-      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${import.meta.env.VITE_GEMINI_API_KEY}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          systemInstruction: {
-            parts: [{ text: buildSystemPrompt() }]
-          },
-          contents: geminiMessages
-        }),
-      });
-      const data = await response.json();
-      if (data.error) throw new Error(data.error.message);
-      
-      const reply = data.candidates?.[0]?.content?.parts?.[0]?.text || 'Keep going! Every rep counts. 💪';
-      setMessages(prev => [...prev, { role: 'assistant', content: reply }]);
+      const reply = await callGroq(groqMessages);
+      setMessages(prev => [...prev, { role: 'assistant', content: reply || 'Keep going! Every rep counts. 💪' }]);
     } catch (e) {
-      console.error(e);
-      setMessages(prev => [...prev, { role: 'assistant', content: 'Connection issue. Please try again!' }]);
+      console.error('Chat error:', e);
+      const errMsg = e.message?.includes('rate_limit') 
+        ? 'API rate limit reached. Please wait a minute and try again! ⏳' 
+        : e.message?.includes('invalid_api_key') || e.message?.includes('401')
+          ? 'Invalid API key. Please check your Groq API key in .env 🔑' 
+          : `Connection issue: ${e.message}. Please try again!`;
+      setMessages(prev => [...prev, { role: 'assistant', content: errMsg }]);
     } finally {
       setChatLoading(false);
       inputRef.current?.focus();
@@ -160,7 +155,7 @@ Be motivating, concise, and gamified in tone. Keep responses under 3 sentences. 
             <div style={{ width: '40px', height: '40px', background: 'var(--color-accent)', borderRadius: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '14px', fontWeight: 800, color: '#000' }}>AI</div>
             <div>
               <div style={{ fontSize: '13px', fontWeight: 700, color: 'var(--color-accent)', textTransform: 'uppercase', letterSpacing: '0.12em' }}>ARQuest AI</div>
-              <div style={{ fontSize: '11px', color: 'var(--color-text-muted)' }}>Powered by Gemini</div>
+              <div style={{ fontSize: '11px', color: 'var(--color-text-muted)' }}>Powered by Groq AI</div>
             </div>
           </div>
 
